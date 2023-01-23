@@ -1,0 +1,127 @@
+---
+version: '3.8'
+networks:
+    dsbd:
+        name: dsbd
+volumes:
+  dbdata:
+        name: dbdata
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - dsbd
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    networks:
+      - dsbd
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      
+  init-kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: init-kafka
+    depends_on:
+      - kafka
+    networks:
+      - dsbd
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:9092 --list
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic prometheusdata --replication-factor 1 --partitions 2
+      "
+      
+  db:
+    image: mysql:5.7
+    restart: always
+    container_name: db
+    networks:
+      - dsbd
+    command: --init-file /data/db.sql
+    expose:
+      - '3306'
+    volumes:
+        - dbdata:/var/lib/mysql
+        - ./db.sql:/data/db.sql
+    environment:
+      MYSQL_ROOT_PASSWORD: pass
+      MYSQL_DATABASE: monitoring
+      MYSQL_USER : user
+      MYSQL_PASSWORD: pass
+      
+  data_storage_1:
+    build: 
+       context: ./Data_Storage
+    container_name: data_storage_1
+    networks:
+      - dsbd    
+    restart: always
+    depends_on:
+      init-kafka:
+          condition: service_completed_successfully
+      
+  data_storage_2:
+    build: 
+       context: ./Data_Storage
+    container_name: data_storage_2
+    networks:
+      - dsbd    
+    restart: always
+    depends_on:
+      init-kafka:
+          condition: service_completed_successfully
+    
+  etl_data_pipeline:
+    build: 
+       context: ./ETL_Data_Pipeline
+    container_name: etl_data_pipeline
+    networks:
+      - dsbd    
+    volumes:
+      - ./ETL_Data_Pipeline/log.txt:/log.txt
+      - ./ETL_Data_Pipeline/SLA.txt:/SLA.txt
+    restart: always
+    depends_on:
+      - data_storage_1
+      - data_storage_2
+      
+  data_retrieval:
+    build: 
+       context: ./Data_Retrieval
+    container_name: data_retrieval
+    ports:
+      - '40000:40000'
+    networks:
+      - dsbd    
+    restart: always
+    depends_on:
+      - db
+      
+  sla_manager:
+    build: 
+       context: ./SLA_Manager
+    container_name: sla_manager
+    ports:
+      - '45000:45000'
+    networks:
+      - dsbd    
+    restart: always
+    depends_on:
+      - db
+      - etl_data_pipeline

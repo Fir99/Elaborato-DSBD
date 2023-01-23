@@ -1,0 +1,1 @@
+{'availableMem': {'min': 85}, 'inodeUsage': {'min': 2, 'max': 3}, 'cpuTemp': {'max': 40}, 'diskUsage': {'max': 50}, 'networkThroughput': {'max': 0.4}}
